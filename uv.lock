@@ -5,7 +5,7 @@ requires-python = ">=3.10"
 [[package]]
 name = "aws-lambda-opentelemetry"
 version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },

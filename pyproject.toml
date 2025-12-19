@@ -1,3 +1,11 @@
+[build-system]
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "aws_lambda_opentelemetry"
+module-root = ""
+
 [project]
 name = "aws-lambda-opentelemetry"
 version = "0.0.0"
