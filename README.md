@@ -1,2 +1,1 @@
-# lambda-opentelemetry
-AWS Lambda OpenTelemetry tools for Python
+## AWS Lambda OpenTelemetry helpers for Python
