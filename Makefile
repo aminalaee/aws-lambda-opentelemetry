@@ -1,5 +1,9 @@
 .DEFAULT_GOAL := all
 
+.PHONY: install
+install:
+	uv sync
+
 .PHONY: format
 format:
 	ruff check --fix .
@@ -12,7 +16,16 @@ lint:
 
 .PHONY: test
 test:
-	pytest --cov=aws_lambda_opentelemetry tests -vvv
+	pytest --cov-report term --cov-report xml:coverage.xml --cov=aws_lambda_opentelemetry tests -vvv
+
+.PHONY: build
+build:
+	uv build
+
+
+.PHONY: publish
+publish:
+	uv publish
 
 .PHONY: all
-all: format lint test
+all: format lint test build
