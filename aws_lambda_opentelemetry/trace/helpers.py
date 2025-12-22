@@ -13,7 +13,7 @@ from aws_lambda_opentelemetry.typing.context import LambdaContext
 from aws_lambda_opentelemetry.utils import set_lambda_handler_attributes
 
 
-def instrument_lambda_handler(**kwargs):
+def instrument_handler(**kwargs):
     """
     Decorate a Lambda handler function to automatically create and manage
     an OpenTelemetry span for the function invocation.
@@ -21,13 +21,14 @@ def instrument_lambda_handler(**kwargs):
     Accepts all keyword arguments from Tracer.start_as_current_span():
 
     :param name: Span name (defaults to function name if not provided)
-    :param kind: SpanKind (defaults to SERVER if not provided)
     :param context: Parent span context
+    :param kind: SpanKind (defaults to SERVER if not provided)
     :param attributes: Initial span attributes dict
     :param links: Span links
     :param start_time: Span start timestamp
     :param record_exception: Whether to record exceptions (default True)
     :param set_status_on_exception: Whether to set error status on exception (default True)
+    :param end_on_exit: Whether to end the span on exit (default True)
     :return: The decorated handler function.
     """
 

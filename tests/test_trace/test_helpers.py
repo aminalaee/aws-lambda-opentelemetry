@@ -1,19 +1,25 @@
+import importlib
+
+import opentelemetry.trace
 import pytest
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-)
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from aws_lambda_opentelemetry.trace import instrument_lambda_handler
+from aws_lambda_opentelemetry.trace import instrument_handler
 from aws_lambda_opentelemetry.typing.context import LambdaContext
 
 exporter = InMemorySpanExporter()
 provider = TracerProvider()
 processor = BatchSpanProcessor(exporter)
 provider.add_span_processor(processor)
-trace.set_tracer_provider(provider)
+
+
+@pytest.fixture(autouse=True)
+def configure_provider():
+    importlib.reload(opentelemetry.trace)
+    opentelemetry.trace.set_tracer_provider(provider)
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +29,7 @@ def clear_exporter():
     exporter.clear()
 
 
-@instrument_lambda_handler(name=__name__)
+@instrument_handler(name=__name__)
 def handler(event, context: LambdaContext):
     return {"statusCode": 200, "body": event["body"]}
 
@@ -36,7 +42,7 @@ class TestInstrumentHandler:
         assert len(spans) == 1
 
         span = spans[0]
-        assert span.name == "tests.test_trace"
+        assert span.name == "tests.test_trace.test_helpers"
 
         assert span.status.status_code.name == "OK"
 
