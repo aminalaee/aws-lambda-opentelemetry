@@ -4,5 +4,6 @@
 .ruff_cache/
 .coverage
 coverage.xml
+dist/
 __pycache__/
 *.py[cod]
