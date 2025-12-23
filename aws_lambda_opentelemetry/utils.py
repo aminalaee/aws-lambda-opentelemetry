@@ -23,27 +23,6 @@ from opentelemetry.semconv._incubating.attributes.messaging_attributes import (
     MESSAGING_SYSTEM,
     MessagingOperationTypeValues,
 )
-
-# from opentelemetry.semconv.attributes.http_attributes import (
-#     HTTP_REQUEST_METHOD,
-#     HTTP_ROUTE,
-# )
-# from opentelemetry.semconv.attributes.server_attributes import (
-#     SERVER_ADDRESS,
-# )
-# from opentelemetry.semconv.attributes.url_attributes import (
-#     URL_PATH,
-#     URL_SCHEME,
-# )
-# from opentelemetry.semconv.attributes.user_agent_attributes import (
-#     USER_AGENT_ORIGINAL,
-# )
-# from opentelemetry.semconv.attributes.client_attributes import (
-#     CLIENT_ADDRESS,
-# )
-# from opentelemetry.semconv.attributes.network_attributes import (
-#     NETWORK_PROTOCOL_VERSION,
-# )
 from opentelemetry.trace import Span
 
 from aws_lambda_opentelemetry import constants
@@ -98,24 +77,6 @@ class DataSourceAttributeMapper:
     def attributes(self) -> dict:
         if self.data_source == AwsDataSource.SQS:
             return self._get_sqs_attributes()
-        # if self.data_source == AwsDataSource.SNS:
-        #     ...
-        # if self.data_source == AwsDataSource.S3:
-        #     ...
-        # if self.data_source == AwsDataSource.DYNAMODB:
-        #     ...
-        # if self.data_source == AwsDataSource.KINESIS:
-        #     ...
-        # if self.data_source == AwsDataSource.EVENT_BRIDGE:
-        #     ...
-        # if self.data_source == AwsDataSource.CLOUDWATCH_LOGS:
-        #     ...
-        # if self.data_source == AwsDataSource.API_GATEWAY:
-        #     ...
-        # if self.data_source == AwsDataSource.HTTP_API:
-        #     ...
-        # if self.data_source == AwsDataSource.ELB:
-        #     ...
         return {}
 
     def get_sources(self) -> tuple[AwsDataSource, FaasTriggerValues]:

@@ -125,12 +125,12 @@ class TestLambdaDataSource:
 
 
 class TestSetLambdaHandlerAttributes:
-    def test_set_attributes(self, lambda_context: LambdaContext):
+    def test_set_general_attributes(self, lambda_context: LambdaContext):
         span = MagicMock(spec=Span)
 
         utils.set_handler_attributes({}, lambda_context, span)
 
-        attributes = span.set_attributes.call_args[0][0]
+        attributes = span.set_attributes.call_args_list[1][0][0]
         assert attributes["faas.invocation_id"] == lambda_context.aws_request_id
         assert attributes["faas.invoked_name"] == lambda_context.function_name
         assert attributes["faas.invoked_region"] == lambda_context.region
@@ -140,3 +140,27 @@ class TestSetLambdaHandlerAttributes:
         assert attributes["faas.coldstart"] is False
         assert attributes["faas.trigger"] == "other"
         assert attributes["cloud.resource_id"] == lambda_context.invoked_function_arn
+
+    def test_sqs_attributes_set(self, lambda_context: LambdaContext):
+        span = MagicMock(spec=Span)
+
+        event = {
+            "Records": [
+                {
+                    "eventSource": "aws:sqs",
+                    "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:queue",
+                    "awsRegion": "us-east-1",
+                }
+            ]
+        }
+
+        utils.set_handler_attributes(event, lambda_context, span)
+
+        attributes = span.set_attributes.call_args_list[0][0][0]
+        assert attributes["messaging.system"] == "aws.sqs"
+        assert attributes["messaging.destination.name"] == "queue"
+        assert attributes["messaging.operation"] == "receive"
+        assert (
+            attributes["cloud.resource_id"]
+            == "arn:aws:sqs:us-east-1:123456789012:queue"
+        )
