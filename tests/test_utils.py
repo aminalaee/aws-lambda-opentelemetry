@@ -3,15 +3,6 @@ from unittest.mock import MagicMock
 import pytest
 from opentelemetry.sdk.trace import Span
 from opentelemetry.semconv._incubating.attributes.faas_attributes import (
-    # FAAS_COLDSTART,
-    # FAAS_INVOCATION_ID,
-    # FAAS_INVOKED_NAME,
-    # FAAS_INVOKED_PROVIDER,
-    # FAAS_INVOKED_REGION,
-    # FAAS_MAX_MEMORY,
-    # FAAS_TRIGGER,
-    # FAAS_VERSION,
-    # FaasInvokedProviderValues,
     FaasTriggerValues,
 )
 
@@ -43,16 +34,23 @@ class TestColdStart:
 
 class TestLambdaDataSource:
     @pytest.mark.parametrize(
-        "key",
-        [("apiId",), ("httpMethod",), ("elb",)],
+        "key,aws_data_source",
+        [
+            ("apiId", utils.AwsDataSource.API_GATEWAY),
+            ("http", utils.AwsDataSource.HTTP_API),
+            ("elb", utils.AwsDataSource.ELB),
+        ],
     )
-    def test_http_trigger(self, key: str):
+    def test_http_trigger(self, key: str, aws_data_source: utils.AwsDataSource):
         event = {
             "requestContext": {
-                "apiId": "example-api-id",
+                key: "example-api-id",
             }
         }
-        assert utils.get_lambda_datasource(event) == utils.FaasTriggerValues.HTTP
+
+        mapper = utils.DataSourceAttributeMapper(event)
+        assert mapper.faas_trigger == utils.FaasTriggerValues.HTTP
+        assert mapper.data_source == aws_data_source
 
     @pytest.mark.parametrize(
         "detail_type, expected",
@@ -66,19 +64,35 @@ class TestLambdaDataSource:
             "source": "aws.events",
             "detail-type": detail_type,
         }
-        assert utils.get_lambda_datasource(event) == expected
+
+        mapper = utils.DataSourceAttributeMapper(event)
+        assert mapper.faas_trigger == expected
+        assert mapper.data_source == utils.AwsDataSource.EVENT_BRIDGE
 
     @pytest.mark.parametrize(
-        "event_source, expected",
+        "event_source, aws_data_source, faas_trigger",
         [
-            ("aws:sns", utils.FaasTriggerValues.PUBSUB),
-            ("aws:sqs", utils.FaasTriggerValues.PUBSUB),
-            ("aws:s3", utils.FaasTriggerValues.DATASOURCE),
-            ("aws:dynamodb", utils.FaasTriggerValues.DATASOURCE),
-            ("aws:kinesis", utils.FaasTriggerValues.DATASOURCE),
+            ("aws:sns", utils.AwsDataSource.SNS, utils.FaasTriggerValues.PUBSUB),
+            ("aws:sqs", utils.AwsDataSource.SQS, utils.FaasTriggerValues.PUBSUB),
+            ("aws:s3", utils.AwsDataSource.S3, utils.FaasTriggerValues.DATASOURCE),
+            (
+                "aws:dynamodb",
+                utils.AwsDataSource.DYNAMODB,
+                utils.FaasTriggerValues.DATASOURCE,
+            ),
+            (
+                "aws:kinesis",
+                utils.AwsDataSource.KINESIS,
+                utils.FaasTriggerValues.DATASOURCE,
+            ),
         ],
     )
-    def test_pubsub_trigger(self, event_source: str, expected: FaasTriggerValues):
+    def test_pubsub_trigger(
+        self,
+        event_source: str,
+        aws_data_source: utils.AwsDataSource,
+        faas_trigger: FaasTriggerValues,
+    ):
         event = {
             "Records": [
                 {
@@ -86,7 +100,10 @@ class TestLambdaDataSource:
                 }
             ]
         }
-        assert utils.get_lambda_datasource(event) == expected
+
+        mapper = utils.DataSourceAttributeMapper(event)
+        assert mapper.faas_trigger == faas_trigger
+        assert mapper.data_source == aws_data_source
 
     def test_cloudwatch_logs_trigger(self):
         event = {
@@ -94,21 +111,26 @@ class TestLambdaDataSource:
                 "data": "example-data",
             }
         }
-        assert utils.get_lambda_datasource(event) == utils.FaasTriggerValues.DATASOURCE
+
+        mapper = utils.DataSourceAttributeMapper(event)
+        assert mapper.faas_trigger == utils.FaasTriggerValues.DATASOURCE
+        assert mapper.data_source == utils.AwsDataSource.CLOUDWATCH_LOGS
 
     def test_unknown_trigger(self):
         event = {}
-        assert utils.get_lambda_datasource(event) == utils.FaasTriggerValues.OTHER
+
+        mapper = utils.DataSourceAttributeMapper(event)
+        assert mapper.faas_trigger == utils.FaasTriggerValues.OTHER
+        assert mapper.data_source == utils.AwsDataSource.OTHER
 
 
 class TestSetLambdaHandlerAttributes:
-    def test_set_attributes(self, lambda_context: LambdaContext):
+    def test_set_general_attributes(self, lambda_context: LambdaContext):
         span = MagicMock(spec=Span)
 
-        utils.set_lambda_handler_attributes({}, lambda_context, span)
+        utils.set_handler_attributes({}, lambda_context, span)
 
-        span.set_attributes.assert_called_once()
-        attributes = span.set_attributes.call_args[0][0]
+        attributes = span.set_attributes.call_args_list[1][0][0]
         assert attributes["faas.invocation_id"] == lambda_context.aws_request_id
         assert attributes["faas.invoked_name"] == lambda_context.function_name
         assert attributes["faas.invoked_region"] == lambda_context.region
@@ -118,3 +140,27 @@ class TestSetLambdaHandlerAttributes:
         assert attributes["faas.coldstart"] is False
         assert attributes["faas.trigger"] == "other"
         assert attributes["cloud.resource_id"] == lambda_context.invoked_function_arn
+
+    def test_sqs_attributes_set(self, lambda_context: LambdaContext):
+        span = MagicMock(spec=Span)
+
+        event = {
+            "Records": [
+                {
+                    "eventSource": "aws:sqs",
+                    "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:queue",
+                    "awsRegion": "us-east-1",
+                }
+            ]
+        }
+
+        utils.set_handler_attributes(event, lambda_context, span)
+
+        attributes = span.set_attributes.call_args_list[0][0][0]
+        assert attributes["messaging.system"] == "aws.sqs"
+        assert attributes["messaging.destination.name"] == "queue"
+        assert attributes["messaging.operation"] == "receive"
+        assert (
+            attributes["cloud.resource_id"]
+            == "arn:aws:sqs:us-east-1:123456789012:queue"
+        )
