@@ -10,7 +10,7 @@ from opentelemetry.trace import (
 )
 
 from aws_lambda_opentelemetry.typing.context import LambdaContext
-from aws_lambda_opentelemetry.utils import set_lambda_handler_attributes
+from aws_lambda_opentelemetry.utils import set_handler_attributes
 
 
 def instrument_handler(**kwargs):
@@ -54,7 +54,7 @@ def instrument_handler(**kwargs):
                         span.record_exception(exc)
                         raise
                     finally:
-                        set_lambda_handler_attributes(event, context, span)
+                        set_handler_attributes(event, context, span)
             finally:
                 provider.force_flush()
 
