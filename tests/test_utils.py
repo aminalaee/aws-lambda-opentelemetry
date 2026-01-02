@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.trace import Span
@@ -41,14 +41,19 @@ class TestLambdaDataSource:
             ("elb", utils.AwsDataSource.ELB),
         ],
     )
-    def test_http_trigger(self, key: str, aws_data_source: utils.AwsDataSource):
+    def test_http_trigger(
+        self,
+        key: str,
+        aws_data_source: utils.AwsDataSource,
+        lambda_context: LambdaContext,
+    ):
         event = {
             "requestContext": {
                 key: "example-api-id",
             }
         }
 
-        mapper = utils.DataSourceAttributeMapper(event)
+        mapper = utils.AwsAttributesMapper(event, lambda_context)
         assert mapper.faas_trigger == utils.FaasTriggerValues.HTTP
         assert mapper.data_source == aws_data_source
 
@@ -59,13 +64,18 @@ class TestLambdaDataSource:
             ("Some Other Event", FaasTriggerValues.PUBSUB),
         ],
     )
-    def test_eventbridge_trigger(self, detail_type: str, expected: FaasTriggerValues):
+    def test_eventbridge_trigger(
+        self,
+        detail_type: str,
+        expected: FaasTriggerValues,
+        lambda_context: LambdaContext,
+    ):
         event = {
             "source": "aws.events",
             "detail-type": detail_type,
         }
 
-        mapper = utils.DataSourceAttributeMapper(event)
+        mapper = utils.AwsAttributesMapper(event, lambda_context)
         assert mapper.faas_trigger == expected
         assert mapper.data_source == utils.AwsDataSource.EVENT_BRIDGE
 
@@ -92,6 +102,7 @@ class TestLambdaDataSource:
         event_source: str,
         aws_data_source: utils.AwsDataSource,
         faas_trigger: FaasTriggerValues,
+        lambda_context: LambdaContext,
     ):
         event = {
             "Records": [
@@ -101,25 +112,25 @@ class TestLambdaDataSource:
             ]
         }
 
-        mapper = utils.DataSourceAttributeMapper(event)
+        mapper = utils.AwsAttributesMapper(event, lambda_context)
         assert mapper.faas_trigger == faas_trigger
         assert mapper.data_source == aws_data_source
 
-    def test_cloudwatch_logs_trigger(self):
+    def test_cloudwatch_logs_trigger(self, lambda_context: LambdaContext):
         event = {
             "awslogs": {
                 "data": "example-data",
             }
         }
 
-        mapper = utils.DataSourceAttributeMapper(event)
+        mapper = utils.AwsAttributesMapper(event, lambda_context)
         assert mapper.faas_trigger == utils.FaasTriggerValues.DATASOURCE
         assert mapper.data_source == utils.AwsDataSource.CLOUDWATCH_LOGS
 
-    def test_unknown_trigger(self):
+    def test_unknown_trigger(self, lambda_context: LambdaContext):
         event = {}
 
-        mapper = utils.DataSourceAttributeMapper(event)
+        mapper = utils.AwsAttributesMapper(event, lambda_context)
         assert mapper.faas_trigger == utils.FaasTriggerValues.OTHER
         assert mapper.data_source == utils.AwsDataSource.OTHER
 
@@ -128,9 +139,15 @@ class TestSetLambdaHandlerAttributes:
     def test_set_general_attributes(self, lambda_context: LambdaContext):
         span = MagicMock(spec=Span)
 
-        utils.set_handler_attributes({}, lambda_context, span)
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
 
-        attributes = span.set_attributes.call_args_list[1][0][0]
+            mapper = utils.AwsAttributesMapper({}, lambda_context)
+            mapper.add_attributes()
+
+        attributes = span.set_attributes.call_args_list[0][0][0]
         assert attributes["faas.invocation_id"] == lambda_context.aws_request_id
         assert attributes["faas.invoked_name"] == lambda_context.function_name
         assert attributes["faas.invoked_region"] == lambda_context.region
@@ -154,9 +171,15 @@ class TestSetLambdaHandlerAttributes:
             ]
         }
 
-        utils.set_handler_attributes(event, lambda_context, span)
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
 
-        attributes = span.set_attributes.call_args_list[0][0][0]
+            mapper = utils.AwsAttributesMapper(event, lambda_context)
+            mapper.add_attributes()
+
+        attributes = span.set_attributes.call_args_list[1][0][0]
         assert attributes["messaging.system"] == "aws.sqs"
         assert attributes["messaging.destination.name"] == "queue"
         assert attributes["messaging.operation"] == "receive"
