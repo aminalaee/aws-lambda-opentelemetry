@@ -17,6 +17,9 @@ from opentelemetry.semconv._incubating.attributes.faas_attributes import (
     FaasInvokedProviderValues,
     FaasTriggerValues,
 )
+from opentelemetry.semconv._incubating.attributes.http_attributes import (
+    HTTP_REQUEST_BODY_SIZE,
+)
 from opentelemetry.semconv._incubating.attributes.messaging_attributes import (
     MESSAGING_BATCH_MESSAGE_COUNT,
     MESSAGING_DESTINATION_NAME,
@@ -24,6 +27,16 @@ from opentelemetry.semconv._incubating.attributes.messaging_attributes import (
     MESSAGING_SYSTEM,
     MessagingOperationTypeValues,
 )
+from opentelemetry.semconv.attributes.http_attributes import (
+    HTTP_REQUEST_METHOD,
+    HTTP_ROUTE,
+)
+from opentelemetry.semconv.attributes.network_attributes import (
+    NETWORK_PROTOCOL_NAME,
+    NETWORK_PROTOCOL_VERSION,
+)
+from opentelemetry.semconv.attributes.url_attributes import URL_FULL
+from opentelemetry.semconv.attributes.user_agent_attributes import USER_AGENT_ORIGINAL
 
 from aws_lambda_opentelemetry import constants
 from aws_lambda_opentelemetry.typing.context import LambdaContext
@@ -61,6 +74,8 @@ class AwsAttributesMapper:
         self._add_aws_attributes()
 
         match self.data_source:
+            case AwsDataSource.API_GATEWAY:
+                self._add_apigateway_attributes()
             case AwsDataSource.SQS:
                 self._add_sqs_attributes()
             case _:
@@ -146,6 +161,23 @@ class AwsAttributesMapper:
                 FAAS_COLDSTART: _check_cold_start(),
                 FAAS_TRIGGER: self.faas_trigger.value,
                 CLOUD_RESOURCE_ID: self.context.invoked_function_arn,
+            }
+        )
+
+    def _add_apigateway_attributes(self) -> None:
+        request_context = self.event.get("requestContext", {})
+        headers = self.event.get("headers", {})
+        protocol = request_context.get("protocol", "")
+
+        self.span.set_attributes(
+            {
+                HTTP_REQUEST_METHOD: self.event.get("httpMethod", ""),
+                HTTP_ROUTE: self.event.get("resource", ""),
+                URL_FULL: self.event.get("path", ""),
+                HTTP_REQUEST_BODY_SIZE: len(self.event.get("body", "") or ""),
+                NETWORK_PROTOCOL_NAME: protocol.split("/")[0],
+                NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1],
+                USER_AGENT_ORIGINAL: headers.get("User-Agent", ""),
             }
         )
 

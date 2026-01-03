@@ -136,7 +136,7 @@ class TestLambdaDataSource:
 
 
 class TestSetLambdaHandlerAttributes:
-    def test_set_general_attributes(self, lambda_context: LambdaContext):
+    def test_general_attributes(self, lambda_context: LambdaContext):
         span = MagicMock(spec=Span)
 
         with patch(
@@ -158,32 +158,44 @@ class TestSetLambdaHandlerAttributes:
         assert attributes["faas.trigger"] == "other"
         assert attributes["cloud.resource_id"] == lambda_context.invoked_function_arn
 
-    def test_sqs_attributes_set(self, lambda_context: LambdaContext):
+    def test_sqs_attributes(self, sqs_event: dict, lambda_context: LambdaContext):
         span = MagicMock(spec=Span)
-
-        event = {
-            "Records": [
-                {
-                    "eventSource": "aws:sqs",
-                    "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:queue",
-                    "awsRegion": "us-east-1",
-                }
-            ]
-        }
 
         with patch(
             "aws_lambda_opentelemetry.utils.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
-            mapper = utils.AwsAttributesMapper(event, lambda_context)
+            mapper = utils.AwsAttributesMapper(sqs_event, lambda_context)
             mapper.add_attributes()
 
         attributes = span.set_attributes.call_args_list[1][0][0]
         assert attributes["messaging.system"] == "aws.sqs"
-        assert attributes["messaging.destination.name"] == "queue"
+        assert attributes["messaging.destination.name"] == "MyQueue"
         assert attributes["messaging.operation"] == "receive"
         assert (
             attributes["cloud.resource_id"]
-            == "arn:aws:sqs:us-east-1:123456789012:queue"
+            == "arn:aws:sqs:us-east-1:123456789012:MyQueue"
         )
+
+    def test_apigateway_attributes(
+        self, apigateway_event: dict, lambda_context: LambdaContext
+    ):
+        span = MagicMock(spec=Span)
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            mapper = utils.AwsAttributesMapper(apigateway_event, lambda_context)
+            mapper.add_attributes()
+
+        attributes = span.set_attributes.call_args_list[1][0][0]
+        assert attributes["http.request.method"] == "POST"
+        assert attributes["url.full"] == "/path/to/resource"
+        assert attributes["http.route"] == "/{proxy+}"
+        assert attributes["http.request.body.size"] == 20
+        assert attributes["network.protocol.name"] == "HTTP"
+        assert attributes["network.protocol.version"] == "1.1"
+        assert attributes["user_agent.original"] == "Custom User Agent String"
