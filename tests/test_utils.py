@@ -272,3 +272,28 @@ class TestSetLambdaHandlerAttributes:
 
         http_attributes = span.set_attributes.call_args_list[1][0][0]
         assert http_attributes["http.request.body.size"] == 0
+
+    def test_alb_attributes(self, alb_event: dict, lambda_context: LambdaContext):
+        span = MagicMock(spec=Span)
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            mapper = utils.AwsAttributesMapper(alb_event, lambda_context)
+            mapper.add_attributes()
+
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.trigger"] == "http"
+
+        alb_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert alb_attributes["http.request.method"] == "POST"
+        assert alb_attributes["url.full"] == "/path/to/resource"
+        assert alb_attributes["http.route"] == "/path/to/resource"
+        assert alb_attributes["http.request.body.size"] == 20
+        assert (
+            alb_attributes["user_agent.original"]
+            == "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        )

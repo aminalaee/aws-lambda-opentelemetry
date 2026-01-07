@@ -78,6 +78,8 @@ class AwsAttributesMapper:
                 self._add_apigateway_attributes()
             case AwsDataSource.HTTP_API:
                 self._add_http_api_attributes()
+            case AwsDataSource.ELB:
+                self._add_elb_attributes()
             case AwsDataSource.SQS:
                 self._add_sqs_attributes()
             case _:
@@ -191,12 +193,25 @@ class AwsAttributesMapper:
         self.span.set_attributes(
             {
                 HTTP_REQUEST_METHOD: http_context.get("method", ""),
-                HTTP_ROUTE: http_context.get("routeKey", ""),
+                HTTP_ROUTE: self.event.get("routeKey", ""),
                 URL_FULL: http_context.get("path", ""),
                 HTTP_REQUEST_BODY_SIZE: len(self.event.get("body", "") or ""),
                 NETWORK_PROTOCOL_NAME: protocol.split("/")[0] if protocol else "",
                 NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1] if protocol else "",
                 USER_AGENT_ORIGINAL: http_context.get("userAgent", ""),
+            }
+        )
+
+    def _add_elb_attributes(self) -> None:
+        headers = self.event.get("headers", {})
+
+        self.span.set_attributes(
+            {
+                HTTP_REQUEST_METHOD: self.event.get("httpMethod", ""),
+                HTTP_ROUTE: self.event.get("path", ""),
+                URL_FULL: self.event.get("path", ""),
+                HTTP_REQUEST_BODY_SIZE: len(self.event.get("body", "") or ""),
+                USER_AGENT_ORIGINAL: headers.get("user-agent", ""),
             }
         )
 

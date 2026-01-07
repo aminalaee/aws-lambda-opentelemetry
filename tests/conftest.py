@@ -41,3 +41,8 @@ def apigateway_event() -> dict:
 @pytest.fixture
 def http_api_event() -> dict:
     return get_fixture("http_api.json")
+
+
+@pytest.fixture
+def alb_event() -> dict:
+    return get_fixture("alb.json")
