@@ -76,6 +76,8 @@ class AwsAttributesMapper:
         match self.data_source:
             case AwsDataSource.API_GATEWAY:
                 self._add_apigateway_attributes()
+            case AwsDataSource.HTTP_API:
+                self._add_http_api_attributes()
             case AwsDataSource.SQS:
                 self._add_sqs_attributes()
             case _:
@@ -84,11 +86,11 @@ class AwsAttributesMapper:
     def _get_aws_data_source(self) -> AwsDataSource:
         # HTTP triggers
         if "requestContext" in self.event:
-            if "apiId" in self.event["requestContext"]:
-                return AwsDataSource.API_GATEWAY
-
             if "http" in self.event["requestContext"]:
                 return AwsDataSource.HTTP_API
+
+            if "apiId" in self.event["requestContext"]:
+                return AwsDataSource.API_GATEWAY
 
             if "elb" in self.event["requestContext"]:
                 return AwsDataSource.ELB
@@ -178,6 +180,23 @@ class AwsAttributesMapper:
                 NETWORK_PROTOCOL_NAME: protocol.split("/")[0],
                 NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1],
                 USER_AGENT_ORIGINAL: headers.get("User-Agent", ""),
+            }
+        )
+
+    def _add_http_api_attributes(self) -> None:
+        request_context = self.event.get("requestContext", {})
+        http_context = request_context.get("http", {})
+        protocol = http_context.get("protocol", "")
+
+        self.span.set_attributes(
+            {
+                HTTP_REQUEST_METHOD: http_context.get("method", ""),
+                HTTP_ROUTE: http_context.get("routeKey", ""),
+                URL_FULL: http_context.get("path", ""),
+                HTTP_REQUEST_BODY_SIZE: len(self.event.get("body", "") or ""),
+                NETWORK_PROTOCOL_NAME: protocol.split("/")[0] if protocol else "",
+                NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1] if protocol else "",
+                USER_AGENT_ORIGINAL: http_context.get("userAgent", ""),
             }
         )
 

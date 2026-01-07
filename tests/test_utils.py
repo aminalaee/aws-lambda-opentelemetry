@@ -169,6 +169,10 @@ class TestSetLambdaHandlerAttributes:
             mapper = utils.AwsAttributesMapper(sqs_event, lambda_context)
             mapper.add_attributes()
 
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.trigger"] == "pubsub"
+
         attributes = span.set_attributes.call_args_list[1][0][0]
         assert attributes["messaging.system"] == "aws.sqs"
         assert attributes["messaging.destination.name"] == "MyQueue"
@@ -191,6 +195,10 @@ class TestSetLambdaHandlerAttributes:
             mapper = utils.AwsAttributesMapper(apigateway_event, lambda_context)
             mapper.add_attributes()
 
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.trigger"] == "http"
+
         attributes = span.set_attributes.call_args_list[1][0][0]
         assert attributes["http.request.method"] == "POST"
         assert attributes["url.full"] == "/path/to/resource"
@@ -199,3 +207,68 @@ class TestSetLambdaHandlerAttributes:
         assert attributes["network.protocol.name"] == "HTTP"
         assert attributes["network.protocol.version"] == "1.1"
         assert attributes["user_agent.original"] == "Custom User Agent String"
+
+    def test_http_api_attributes(
+        self, http_api_event: dict, lambda_context: LambdaContext
+    ):
+        span = MagicMock(spec=Span)
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            mapper = utils.AwsAttributesMapper(http_api_event, lambda_context)
+            mapper.add_attributes()
+
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.trigger"] == "http"
+
+        http_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert http_attributes["http.request.method"] == "POST"
+        assert http_attributes["url.full"] == "/path/to/resource"
+        assert http_attributes["http.route"] == "$default"
+        assert http_attributes["http.request.body.size"] == 20
+        assert http_attributes["network.protocol.name"] == "HTTP"
+        assert http_attributes["network.protocol.version"] == "1.1"
+        assert http_attributes["user_agent.original"] == "agent"
+
+    def test_http_api_attributes_with_empty_protocol(
+        self, http_api_event: dict, lambda_context: LambdaContext
+    ):
+        """Test HTTP API attributes when protocol is empty or missing."""
+        span = MagicMock(spec=Span)
+
+        http_api_event["requestContext"]["http"]["protocol"] = ""
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            mapper = utils.AwsAttributesMapper(http_api_event, lambda_context)
+            mapper.add_attributes()
+
+        http_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert http_attributes["network.protocol.name"] == ""
+        assert http_attributes["network.protocol.version"] == ""
+
+    def test_http_api_attributes_with_missing_body(
+        self, http_api_event: dict, lambda_context: LambdaContext
+    ):
+        """Test HTTP API attributes when body is None or missing."""
+        span = MagicMock(spec=Span)
+
+        http_api_event["body"] = None
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            mapper = utils.AwsAttributesMapper(http_api_event, lambda_context)
+            mapper.add_attributes()
+
+        http_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert http_attributes["http.request.body.size"] == 0

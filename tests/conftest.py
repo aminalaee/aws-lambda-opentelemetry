@@ -36,3 +36,8 @@ def sqs_event() -> dict:
 @pytest.fixture
 def apigateway_event() -> dict:
     return get_fixture("apigateway.json")
+
+
+@pytest.fixture
+def http_api_event() -> dict:
+    return get_fixture("http_api.json")
