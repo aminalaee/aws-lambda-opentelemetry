@@ -2,9 +2,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.trace import Span
-from opentelemetry.semconv._incubating.attributes.faas_attributes import (
-    FaasTriggerValues,
-)
 
 from aws_lambda_opentelemetry import utils
 from aws_lambda_opentelemetry.typing.context import LambdaContext
@@ -34,66 +31,69 @@ class TestColdStart:
 
 class TestLambdaDataSource:
     @pytest.mark.parametrize(
-        "key,aws_data_source",
+        "aws_data_source,extractor_class,event",
         [
-            ("apiId", utils.AwsDataSource.API_GATEWAY),
-            ("http", utils.AwsDataSource.HTTP_API),
-            ("elb", utils.AwsDataSource.ELB),
+            (
+                utils.AwsDataSource.API_GATEWAY,
+                utils.ApiGatewayExtractor,
+                {"requestContext": {"apiId": ""}},
+            ),
+            (
+                utils.AwsDataSource.HTTP_API,
+                utils.HttpApiExtractor,
+                {"requestContext": {"http": {}}},
+            ),
+            (
+                utils.AwsDataSource.ELB,
+                utils.ElbExtractor,
+                {"requestContext": {"elb": {}}},
+            ),
         ],
     )
     def test_http_trigger(
         self,
-        key: str,
         aws_data_source: utils.AwsDataSource,
-        lambda_context: LambdaContext,
+        extractor_class: type[utils.AttributeExtractor],
+        event: dict,
     ):
-        event = {
-            "requestContext": {
-                key: "example-api-id",
-            }
-        }
+        extractor = extractor_class()
+        assert extractor.can_handle(event)
+        assert extractor.data_source == aws_data_source
 
-        mapper = utils.AwsAttributesMapper(event, lambda_context)
-        assert mapper.faas_trigger == utils.FaasTriggerValues.HTTP
-        assert mapper.data_source == aws_data_source
+    def test_eventbridge_trigger(self):
+        event = {"source": "aws.events", "detail-type": "Scheduled Event"}
+        extractor = utils.EventBridgeExtractor()
+
+        assert extractor.can_handle(event)
+        assert extractor.data_source == utils.AwsDataSource.EVENT_BRIDGE
 
     @pytest.mark.parametrize(
-        "detail_type, expected",
+        "event_source, aws_data_source, extractor_class",
         [
-            ("Scheduled Event", FaasTriggerValues.TIMER),
-            ("Some Other Event", FaasTriggerValues.PUBSUB),
-        ],
-    )
-    def test_eventbridge_trigger(
-        self,
-        detail_type: str,
-        expected: FaasTriggerValues,
-        lambda_context: LambdaContext,
-    ):
-        event = {
-            "source": "aws.events",
-            "detail-type": detail_type,
-        }
-
-        mapper = utils.AwsAttributesMapper(event, lambda_context)
-        assert mapper.faas_trigger == expected
-        assert mapper.data_source == utils.AwsDataSource.EVENT_BRIDGE
-
-    @pytest.mark.parametrize(
-        "event_source, aws_data_source, faas_trigger",
-        [
-            ("aws:sns", utils.AwsDataSource.SNS, utils.FaasTriggerValues.PUBSUB),
-            ("aws:sqs", utils.AwsDataSource.SQS, utils.FaasTriggerValues.PUBSUB),
-            ("aws:s3", utils.AwsDataSource.S3, utils.FaasTriggerValues.DATASOURCE),
+            (
+                "aws:sns",
+                utils.AwsDataSource.SNS,
+                utils.SnsExtractor,
+            ),
+            (
+                "aws:sqs",
+                utils.AwsDataSource.SQS,
+                utils.SqsExtractor,
+            ),
+            (
+                "aws:s3",
+                utils.AwsDataSource.S3,
+                utils.S3Extractor,
+            ),
             (
                 "aws:dynamodb",
                 utils.AwsDataSource.DYNAMODB,
-                utils.FaasTriggerValues.DATASOURCE,
+                utils.DynamoDbExtractor,
             ),
             (
                 "aws:kinesis",
                 utils.AwsDataSource.KINESIS,
-                utils.FaasTriggerValues.DATASOURCE,
+                utils.KinesisExtractor,
             ),
         ],
     )
@@ -101,8 +101,7 @@ class TestLambdaDataSource:
         self,
         event_source: str,
         aws_data_source: utils.AwsDataSource,
-        faas_trigger: FaasTriggerValues,
-        lambda_context: LambdaContext,
+        extractor_class: type[utils.AttributeExtractor],
     ):
         event = {
             "Records": [
@@ -112,27 +111,28 @@ class TestLambdaDataSource:
             ]
         }
 
-        mapper = utils.AwsAttributesMapper(event, lambda_context)
-        assert mapper.faas_trigger == faas_trigger
-        assert mapper.data_source == aws_data_source
+        extractor = extractor_class()
 
-    def test_cloudwatch_logs_trigger(self, lambda_context: LambdaContext):
+        assert extractor.can_handle(event)
+        assert extractor.data_source == aws_data_source
+
+    def test_cloudwatch_logs_trigger(self):
         event = {
             "awslogs": {
                 "data": "example-data",
             }
         }
+        extractor = utils.CloudWatchLogsExtractor()
 
-        mapper = utils.AwsAttributesMapper(event, lambda_context)
-        assert mapper.faas_trigger == utils.FaasTriggerValues.DATASOURCE
-        assert mapper.data_source == utils.AwsDataSource.CLOUDWATCH_LOGS
+        assert extractor.can_handle(event)
+        assert extractor.data_source == utils.AwsDataSource.CLOUDWATCH_LOGS
 
-    def test_unknown_trigger(self, lambda_context: LambdaContext):
+    def test_unknown_trigger(self):
         event = {}
+        extractor = utils.GenericAwsExtractor()
 
-        mapper = utils.AwsAttributesMapper(event, lambda_context)
-        assert mapper.faas_trigger == utils.FaasTriggerValues.OTHER
-        assert mapper.data_source == utils.AwsDataSource.OTHER
+        assert extractor.can_handle(event)
+        assert extractor.data_source == utils.AwsDataSource.OTHER
 
 
 class TestSetLambdaHandlerAttributes:
@@ -144,8 +144,10 @@ class TestSetLambdaHandlerAttributes:
         ) as mock_span:
             mock_span.return_value = span
 
-            mapper = utils.AwsAttributesMapper({}, lambda_context)
-            mapper.add_attributes()
+            extractor = utils.AwsAttributesExtractor({}, lambda_context)
+            extractor.add_attributes()
+
+        assert span.set_attributes.call_count == 1
 
         attributes = span.set_attributes.call_args_list[0][0][0]
         assert attributes["faas.invocation_id"] == lambda_context.aws_request_id
@@ -155,7 +157,6 @@ class TestSetLambdaHandlerAttributes:
         assert attributes["faas.max_memory"] == lambda_context.memory_limit_in_mb
         assert attributes["faas.version"] == lambda_context.function_version
         assert attributes["faas.coldstart"] is False
-        assert attributes["faas.trigger"] == "other"
         assert attributes["cloud.resource_id"] == lambda_context.invoked_function_arn
 
     def test_sqs_attributes(self, sqs_event: dict, lambda_context: LambdaContext):
@@ -166,15 +167,22 @@ class TestSetLambdaHandlerAttributes:
         ) as mock_span:
             mock_span.return_value = span
 
-            mapper = utils.AwsAttributesMapper(sqs_event, lambda_context)
-            mapper.add_attributes()
+            extractor = utils.AwsAttributesExtractor(sqs_event, lambda_context)
+            extractor.add_attributes()
 
-        attributes = span.set_attributes.call_args_list[1][0][0]
-        assert attributes["messaging.system"] == "aws.sqs"
-        assert attributes["messaging.destination.name"] == "MyQueue"
-        assert attributes["messaging.operation"] == "receive"
+        assert span.set_attributes.call_count == 2
+
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.coldstart"] is False
+
+        sqs_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert sqs_attributes["faas.trigger"] == "pubsub"
+        assert sqs_attributes["messaging.system"] == "aws.sqs"
+        assert sqs_attributes["messaging.destination.name"] == "MyQueue"
+        assert sqs_attributes["messaging.operation"] == "receive"
         assert (
-            attributes["cloud.resource_id"]
+            sqs_attributes["cloud.resource_id"]
             == "arn:aws:sqs:us-east-1:123456789012:MyQueue"
         )
 
@@ -188,14 +196,117 @@ class TestSetLambdaHandlerAttributes:
         ) as mock_span:
             mock_span.return_value = span
 
-            mapper = utils.AwsAttributesMapper(apigateway_event, lambda_context)
-            mapper.add_attributes()
+            extractor = utils.AwsAttributesExtractor(apigateway_event, lambda_context)
+            extractor.add_attributes()
 
-        attributes = span.set_attributes.call_args_list[1][0][0]
-        assert attributes["http.request.method"] == "POST"
-        assert attributes["url.full"] == "/path/to/resource"
-        assert attributes["http.route"] == "/{proxy+}"
-        assert attributes["http.request.body.size"] == 20
-        assert attributes["network.protocol.name"] == "HTTP"
-        assert attributes["network.protocol.version"] == "1.1"
-        assert attributes["user_agent.original"] == "Custom User Agent String"
+        assert span.set_attributes.call_count == 2
+
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.coldstart"] is False
+
+        api_gateway_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert api_gateway_attributes["faas.trigger"] == "http"
+        assert api_gateway_attributes["http.request.method"] == "POST"
+        assert api_gateway_attributes["url.full"] == "/path/to/resource"
+        assert api_gateway_attributes["http.route"] == "/{proxy+}"
+        assert api_gateway_attributes["http.request.body.size"] == 20
+        assert api_gateway_attributes["network.protocol.name"] == "HTTP"
+        assert api_gateway_attributes["network.protocol.version"] == "1.1"
+        assert (
+            api_gateway_attributes["user_agent.original"] == "Custom User Agent String"
+        )
+
+    def test_http_api_attributes(
+        self, http_api_event: dict, lambda_context: LambdaContext
+    ):
+        span = MagicMock(spec=Span)
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            extractor = utils.AwsAttributesExtractor(http_api_event, lambda_context)
+            extractor.add_attributes()
+
+        assert span.set_attributes.call_count == 2
+
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.coldstart"] is False
+
+        http_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert http_attributes["faas.trigger"] == "http"
+        assert http_attributes["http.request.method"] == "POST"
+        assert http_attributes["url.full"] == "/path/to/resource"
+        assert http_attributes["http.route"] == "$default"
+        assert http_attributes["http.request.body.size"] == 20
+        assert http_attributes["network.protocol.name"] == "HTTP"
+        assert http_attributes["network.protocol.version"] == "1.1"
+        assert http_attributes["user_agent.original"] == "agent"
+
+    def test_http_api_attributes_with_empty_protocol(
+        self, http_api_event: dict, lambda_context: LambdaContext
+    ):
+        span = MagicMock(spec=Span)
+
+        http_api_event["requestContext"]["http"]["protocol"] = ""
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            extractor = utils.AwsAttributesExtractor(http_api_event, lambda_context)
+            extractor.add_attributes()
+
+        http_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert http_attributes["network.protocol.name"] == ""
+        assert http_attributes["network.protocol.version"] == ""
+
+    def test_http_api_attributes_with_missing_body(
+        self, http_api_event: dict, lambda_context: LambdaContext
+    ):
+        span = MagicMock(spec=Span)
+
+        http_api_event["body"] = None
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            extractor = utils.AwsAttributesExtractor(http_api_event, lambda_context)
+            extractor.add_attributes()
+
+        http_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert http_attributes["http.request.body.size"] == 0
+
+    def test_alb_attributes(self, alb_event: dict, lambda_context: LambdaContext):
+        span = MagicMock(spec=Span)
+
+        with patch(
+            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+        ) as mock_span:
+            mock_span.return_value = span
+
+            extractor = utils.AwsAttributesExtractor(alb_event, lambda_context)
+            extractor.add_attributes()
+
+        assert span.set_attributes.call_count == 2
+
+        general_attributes = span.set_attributes.call_args_list[0][0][0]
+        assert general_attributes["faas.invocation_id"] == lambda_context.aws_request_id
+        assert general_attributes["faas.coldstart"] is False
+
+        alb_attributes = span.set_attributes.call_args_list[1][0][0]
+        assert alb_attributes["faas.trigger"] == "http"
+        assert alb_attributes["http.request.method"] == "POST"
+        assert alb_attributes["url.full"] == "/path/to/resource"
+        assert alb_attributes["http.route"] == "/path/to/resource"
+        assert alb_attributes["http.request.body.size"] == 20
+        assert (
+            alb_attributes["user_agent.original"]
+            == "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        )
