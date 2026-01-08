@@ -62,8 +62,8 @@ class TestLambdaDataSource:
 
     def test_eventbridge_trigger(self):
         event = {"source": "aws.events", "detail-type": "Scheduled Event"}
-
         extractor = utils.EventBridgeExtractor()
+
         assert extractor.can_handle(event)
         assert extractor.data_source == utils.AwsDataSource.EVENT_BRIDGE
 
@@ -112,6 +112,7 @@ class TestLambdaDataSource:
         }
 
         extractor = extractor_class()
+
         assert extractor.can_handle(event)
         assert extractor.data_source == aws_data_source
 
@@ -121,15 +122,15 @@ class TestLambdaDataSource:
                 "data": "example-data",
             }
         }
-
         extractor = utils.CloudWatchLogsExtractor()
+
         assert extractor.can_handle(event)
         assert extractor.data_source == utils.AwsDataSource.CLOUDWATCH_LOGS
 
     def test_unknown_trigger(self):
         event = {}
-
         extractor = utils.GenericAwsExtractor()
+
         assert extractor.can_handle(event)
         assert extractor.data_source == utils.AwsDataSource.OTHER
 
@@ -147,6 +148,7 @@ class TestSetLambdaHandlerAttributes:
             extractor.add_attributes()
 
         assert span.set_attributes.call_count == 1
+
         attributes = span.set_attributes.call_args_list[0][0][0]
         assert attributes["faas.invocation_id"] == lambda_context.aws_request_id
         assert attributes["faas.invoked_name"] == lambda_context.function_name

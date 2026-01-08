@@ -62,15 +62,15 @@ class AwsDataSource(enum.Enum):
 class AttributeExtractor(ABC):
     """Base class for AWS service-specific attribute extractors."""
 
-    @abstractmethod
-    def can_handle(self, event: dict) -> bool:
-        """Determine if this extractor can handle the given event."""
-        raise NotImplementedError()  # pragma: no cover
-
     @property
     @abstractmethod
     def data_source(self) -> AwsDataSource:
         """Return the AWS data source this extractor handles."""
+        raise NotImplementedError()  # pragma: no cover
+
+    @abstractmethod
+    def can_handle(self, event: dict) -> bool:
+        """Determine if this extractor can handle the given event."""
         raise NotImplementedError()  # pragma: no cover
 
     @abstractmethod
