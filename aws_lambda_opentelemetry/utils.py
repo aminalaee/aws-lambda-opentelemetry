@@ -2,6 +2,7 @@ import enum
 import os
 from abc import ABC, abstractmethod
 
+from aws_lambda_powertools.utilities.typing import LambdaContext
 from opentelemetry import trace
 from opentelemetry.semconv._incubating.attributes.cloud_attributes import (
     CLOUD_RESOURCE_ID,
@@ -40,7 +41,6 @@ from opentelemetry.semconv.attributes.url_attributes import URL_FULL
 from opentelemetry.semconv.attributes.user_agent_attributes import USER_AGENT_ORIGINAL
 
 from aws_lambda_opentelemetry import constants
-from aws_lambda_opentelemetry.typing.context import LambdaContext
 
 _is_cold_start = True
 
@@ -91,7 +91,7 @@ class GenericAwsExtractor(AttributeExtractor):
         return {
             FAAS_INVOCATION_ID: context.aws_request_id,
             FAAS_INVOKED_NAME: context.function_name,
-            FAAS_INVOKED_REGION: context.region,
+            FAAS_INVOKED_REGION: os.getenv("AWS_DEFAULT_REGION"),
             FAAS_INVOKED_PROVIDER: FaasInvokedProviderValues.AWS.value,
             FAAS_MAX_MEMORY: context.memory_limit_in_mb,
             FAAS_VERSION: context.function_version,

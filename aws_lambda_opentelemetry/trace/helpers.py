@@ -1,5 +1,8 @@
+from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
+from aws_lambda_powertools.utilities.typing import LambdaContext
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import (
     SpanKind,
@@ -9,33 +12,23 @@ from opentelemetry.trace import (
     get_tracer_provider,
 )
 
-from aws_lambda_opentelemetry.typing.context import LambdaContext
 from aws_lambda_opentelemetry.utils import AwsAttributesExtractor
 
 
-def instrument_handler(**kwargs):
-    """
-    Decorate a Lambda handler function to automatically create and manage
-    an OpenTelemetry span for the function invocation.
+class Instrumentor:
+    def __init__(self, service: str | None = None):
+        self._service = service
 
-    Accepts all keyword arguments from Tracer.start_as_current_span():
+    def _get_tracer(self, func: Callable) -> Any:
+        return get_tracer(self._service or func.__module__)
 
-    :param name: Span name (defaults to function name if not provided)
-    :param context: Parent span context
-    :param kind: SpanKind (defaults to SERVER if not provided)
-    :param attributes: Initial span attributes dict
-    :param links: Span links
-    :param start_time: Span start timestamp
-    :param record_exception: Whether to record exceptions (default True)
-    :param set_status_on_exception: Whether to set error status on exception (default True)
-    :param end_on_exit: Whether to end the span on exit (default True)
-    :return: The decorated handler function.
-    """
+    def capture_lambda_handler(self, func: Callable | None = None, **kwargs: Any):
+        if func is None:
+            return lambda f: self.capture_lambda_handler(f, **kwargs)
 
-    def decorator(func):
         @wraps(func)
         def wrapper(event: dict, context: LambdaContext):
-            tracer = get_tracer(func.__module__)
+            tracer = self._get_tracer(func)
             provider = get_tracer_provider()
             kwargs.setdefault("name", func.__name__)
             kwargs.setdefault("kind", SpanKind.SERVER)
@@ -61,4 +54,23 @@ def instrument_handler(**kwargs):
 
         return wrapper
 
-    return decorator
+    def capture_method(self, method: Callable | None = None, **kwargs: Any):
+        if method is None:
+            return lambda m: self.capture_method(m, **kwargs)
+
+        @wraps(method)
+        def wrapper(*args: Any, **func_kwargs: Any):
+            tracer = self._get_tracer(method)
+            kwargs.setdefault("name", method.__qualname__)
+
+            with tracer.start_as_current_span(**kwargs) as span:
+                try:
+                    response = method(*args, **func_kwargs)
+                    span.set_status(Status(StatusCode.OK))
+                    return response
+                except Exception as exc:
+                    span.set_status(Status(StatusCode.ERROR))
+                    span.record_exception(exc)
+                    raise
+
+        return wrapper

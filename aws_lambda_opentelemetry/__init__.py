@@ -1,5 +1,5 @@
-from aws_lambda_opentelemetry.trace import instrument_handler
+from aws_lambda_opentelemetry.trace import Instrumentor
 
 __all__ = [
-    "instrument_handler",
+    "Instrumentor",
 ]

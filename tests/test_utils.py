@@ -1,10 +1,10 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from aws_lambda_powertools.utilities.typing import LambdaContext
 from opentelemetry.sdk.trace import Span
 
 from aws_lambda_opentelemetry import utils
-from aws_lambda_opentelemetry.typing.context import LambdaContext
 
 
 class TestColdStart:
@@ -152,7 +152,7 @@ class TestSetLambdaHandlerAttributes:
         attributes = span.set_attributes.call_args_list[0][0][0]
         assert attributes["faas.invocation_id"] == lambda_context.aws_request_id
         assert attributes["faas.invoked_name"] == lambda_context.function_name
-        assert attributes["faas.invoked_region"] == lambda_context.region
+        assert attributes["faas.invoked_region"] is None
         assert attributes["faas.invoked_provider"] == "aws"
         assert attributes["faas.max_memory"] == lambda_context.memory_limit_in_mb
         assert attributes["faas.version"] == lambda_context.function_version

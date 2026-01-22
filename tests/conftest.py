@@ -2,8 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from aws_lambda_opentelemetry.typing.context import LambdaContext
+from aws_lambda_powertools.utilities.typing import LambdaContext
 
 
 class MockLambdaContext(LambdaContext):
