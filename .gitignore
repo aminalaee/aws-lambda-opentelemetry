@@ -5,5 +5,6 @@
 .coverage
 coverage.xml
 dist/
+site/
 __pycache__/
 *.py[cod]

@@ -27,5 +27,17 @@ build:
 publish:
 	uv publish
 
+.PHONY: docs-build
+docs-build:
+	uv run --group docs mkdocs build
+
+.PHONY: docs-serve
+docs-serve:
+	uv run --group docs mkdocs serve --dev-addr localhost:8080
+
+.PHONY: docs-deploy
+docs-deploy:
+	uv run --group docs mkdocs gh-deploy --force
+
 .PHONY: all
 all: format lint test build

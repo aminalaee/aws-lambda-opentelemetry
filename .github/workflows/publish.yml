@@ -4,7 +4,7 @@ name: Publish
 on:
   push:
     tags:
-      - '*'
+      - "*"
 
 jobs:
   publish:
@@ -23,9 +23,12 @@ jobs:
       - name: "Build package & docs"
         run: |
           make build
+          make docs-build
       - name: "Publish"
         run: |
           make publish
         env:
           UV_PUBLISH_USERNAME: __token__
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      - name: "Deploy docs"
+        run: make docs-deploy

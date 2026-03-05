@@ -1,0 +1,44 @@
+site_name: AWS Lambda OpenTelemetry
+site_description: OpenTelemetry instrumentation for AWS Lambda functions.
+site_url: https://aminalaee.github.io/aws-lambda-opentelemetry/
+repo_name: aminalaee/aws-lambda-opentelemetry
+repo_url: https://github.com/aminalaee/aws-lambda-opentelemetry
+
+theme:
+  name: material
+  palette:
+    primary: white
+  features:
+    - content.code.copy
+
+nav:
+  - Introduction: index.md
+  - API Reference:
+      - Instrumentor: api_reference/instrumentor.md
+      - Exporters: api_reference/exporters.md
+
+markdown_extensions:
+  - markdown.extensions.codehilite:
+      guess_lang: false
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.tabbed
+  - pymdownx.superfences
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_source: false
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/aminalaee/aws-lambda-opentelemetry
