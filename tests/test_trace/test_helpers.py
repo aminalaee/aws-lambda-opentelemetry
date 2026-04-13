@@ -7,7 +7,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from aws_lambda_opentelemetry import Instrumentor
+from aws_lambda_opentelemetry import Instrumentor, extractors
 
 exporter = InMemorySpanExporter()
 provider = TracerProvider()
@@ -48,6 +48,7 @@ def handler_with_method(event, context: LambdaContext):
 
 class TestCaptureHandler:
     def test_handler_attributes_are_set(self, lambda_context: LambdaContext):
+        extractors._is_cold_start = True
         handler({"body": "Hello, World!"}, lambda_context)
 
         spans = exporter.get_finished_spans()
@@ -117,6 +118,8 @@ class TestCaptureMethod:
 
         assert child_span.name == "process_body"
         assert parent_span.name == "handler_with_method"
+        assert child_span.parent is not None
+        assert parent_span.context is not None
         assert child_span.parent.span_id == parent_span.context.span_id
 
     def test_child_span_status_ok(self, lambda_context: LambdaContext):

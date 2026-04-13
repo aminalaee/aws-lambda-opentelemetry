@@ -4,7 +4,7 @@ import pytest
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from opentelemetry.sdk.trace import Span
 
-from aws_lambda_opentelemetry import utils
+from aws_lambda_opentelemetry import extractors as utils
 
 
 class TestColdStart:
@@ -36,17 +36,38 @@ class TestLambdaDataSource:
             (
                 utils.AwsDataSource.API_GATEWAY,
                 utils.ApiGatewayExtractor,
-                {"requestContext": {"apiId": ""}},
+                {
+                    "requestContext": {"apiId": "test", "protocol": "HTTP/1.1"},
+                    "headers": {},
+                    "httpMethod": "GET",
+                    "resource": "/",
+                    "path": "/",
+                },
             ),
             (
                 utils.AwsDataSource.HTTP_API,
                 utils.HttpApiExtractor,
-                {"requestContext": {"http": {}}},
+                {
+                    "requestContext": {
+                        "http": {
+                            "method": "GET",
+                            "path": "/",
+                            "protocol": "HTTP/1.1",
+                            "userAgent": "test",
+                        },
+                    },
+                    "routeKey": "$default",
+                },
             ),
             (
                 utils.AwsDataSource.ELB,
                 utils.ElbExtractor,
-                {"requestContext": {"elb": {}}},
+                {
+                    "requestContext": {"elb": {}},
+                    "httpMethod": "GET",
+                    "path": "/",
+                    "headers": {},
+                },
             ),
         ],
     )
@@ -55,16 +76,17 @@ class TestLambdaDataSource:
         aws_data_source: utils.AwsDataSource,
         extractor_class: type[utils.AttributeExtractor],
         event: dict,
+        lambda_context: LambdaContext,
     ):
         extractor = extractor_class()
-        assert extractor.can_handle(event)
+        assert extractor.extract(event, lambda_context) is not None
         assert extractor.data_source == aws_data_source
 
-    def test_eventbridge_trigger(self):
+    def test_eventbridge_trigger(self, lambda_context: LambdaContext):
         event = {"source": "aws.events", "detail-type": "Scheduled Event"}
         extractor = utils.EventBridgeExtractor()
 
-        assert extractor.can_handle(event)
+        assert extractor.extract(event, lambda_context) is not None
         assert extractor.data_source == utils.AwsDataSource.EVENT_BRIDGE
 
     @pytest.mark.parametrize(
@@ -102,21 +124,21 @@ class TestLambdaDataSource:
         event_source: str,
         aws_data_source: utils.AwsDataSource,
         extractor_class: type[utils.AttributeExtractor],
+        lambda_context: LambdaContext,
     ):
-        event = {
-            "Records": [
-                {
-                    "eventSource": event_source,
-                }
-            ]
-        }
+        record = {"eventSource": event_source}
+        if event_source == "aws:sqs":
+            record["eventSourceARN"] = "arn:aws:sqs:us-east-1:123456789012:TestQueue"
+        if event_source == "aws:sns":
+            record = {"EventSource": event_source, "Sns": {}}
+        event = {"Records": [record]}
 
         extractor = extractor_class()
 
-        assert extractor.can_handle(event)
+        assert extractor.extract(event, lambda_context) is not None
         assert extractor.data_source == aws_data_source
 
-    def test_cloudwatch_logs_trigger(self):
+    def test_cloudwatch_logs_trigger(self, lambda_context: LambdaContext):
         event = {
             "awslogs": {
                 "data": "example-data",
@@ -124,14 +146,14 @@ class TestLambdaDataSource:
         }
         extractor = utils.CloudWatchLogsExtractor()
 
-        assert extractor.can_handle(event)
+        assert extractor.extract(event, lambda_context) is not None
         assert extractor.data_source == utils.AwsDataSource.CLOUDWATCH_LOGS
 
-    def test_unknown_trigger(self):
+    def test_unknown_trigger(self, lambda_context: LambdaContext):
         event = {}
         extractor = utils.GenericAwsExtractor()
 
-        assert extractor.can_handle(event)
+        assert extractor.extract(event, lambda_context) is not None
         assert extractor.data_source == utils.AwsDataSource.OTHER
 
 
@@ -140,7 +162,7 @@ class TestSetLambdaHandlerAttributes:
         span = MagicMock(spec=Span)
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
@@ -163,7 +185,7 @@ class TestSetLambdaHandlerAttributes:
         span = MagicMock(spec=Span)
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
@@ -192,7 +214,7 @@ class TestSetLambdaHandlerAttributes:
         span = MagicMock(spec=Span)
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
@@ -223,7 +245,7 @@ class TestSetLambdaHandlerAttributes:
         span = MagicMock(spec=Span)
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
@@ -254,7 +276,7 @@ class TestSetLambdaHandlerAttributes:
         http_api_event["requestContext"]["http"]["protocol"] = ""
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
@@ -273,7 +295,7 @@ class TestSetLambdaHandlerAttributes:
         http_api_event["body"] = None
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 
@@ -287,7 +309,7 @@ class TestSetLambdaHandlerAttributes:
         span = MagicMock(spec=Span)
 
         with patch(
-            "aws_lambda_opentelemetry.utils.trace.get_current_span"
+            "aws_lambda_opentelemetry.extractors.trace.get_current_span"
         ) as mock_span:
             mock_span.return_value = span
 

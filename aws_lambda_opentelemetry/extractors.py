@@ -2,6 +2,18 @@ import enum
 import os
 from abc import ABC, abstractmethod
 
+from aws_lambda_powertools.utilities.data_classes import (
+    ALBEvent,
+    APIGatewayProxyEvent,
+    APIGatewayProxyEventV2,
+    CloudWatchLogsEvent,
+    DynamoDBStreamEvent,
+    EventBridgeEvent,
+    KinesisStreamEvent,
+    S3Event,
+    SNSEvent,
+    SQSEvent,
+)
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from opentelemetry import trace
 from opentelemetry.semconv._incubating.attributes.cloud_attributes import (
@@ -66,17 +78,12 @@ class AttributeExtractor(ABC):
     @abstractmethod
     def data_source(self) -> AwsDataSource:
         """Return the AWS data source this extractor handles."""
-        raise NotImplementedError()  # pragma: no cover
+        ...  # pragma: no cover
 
     @abstractmethod
-    def can_handle(self, event: dict) -> bool:
-        """Determine if this extractor can handle the given event."""
-        raise NotImplementedError()  # pragma: no cover
-
-    @abstractmethod
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
-        """Extract related attributes from the event and context."""
-        raise NotImplementedError()  # pragma: no cover
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        """Extract attributes if this extractor can handle the event, otherwise return None."""
+        ...  # pragma: no cover
 
 
 class GenericAwsExtractor(AttributeExtractor):
@@ -84,10 +91,7 @@ class GenericAwsExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.OTHER
 
-    def can_handle(self, event: dict) -> bool:
-        return True
-
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
         return {
             FAAS_INVOCATION_ID: context.aws_request_id,
             FAAS_INVOKED_NAME: context.function_name,
@@ -105,24 +109,24 @@ class HttpApiExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.HTTP_API
 
-    def can_handle(self, event: dict) -> bool:
-        return "requestContext" in event and "http" in event["requestContext"]
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            api_event = APIGatewayProxyEventV2(event)
+            http = api_event.request_context.http
+            protocol = http.protocol or ""
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
-        request_context = event.get("requestContext", {})
-        http_context = request_context.get("http", {})
-        protocol = http_context.get("protocol", "")
-
-        return {
-            FAAS_TRIGGER: FaasTriggerValues.HTTP.value,
-            HTTP_REQUEST_METHOD: http_context.get("method", ""),
-            HTTP_ROUTE: event.get("routeKey", ""),
-            HTTP_REQUEST_BODY_SIZE: len(event.get("body", "") or ""),
-            NETWORK_PROTOCOL_NAME: protocol.split("/")[0] if protocol else "",
-            NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1] if protocol else "",
-            USER_AGENT_ORIGINAL: http_context.get("userAgent", ""),
-            URL_FULL: http_context.get("path", ""),
-        }
+            return {
+                FAAS_TRIGGER: FaasTriggerValues.HTTP.value,
+                HTTP_REQUEST_METHOD: http.method or "",
+                HTTP_ROUTE: api_event.route_key or "",
+                HTTP_REQUEST_BODY_SIZE: len(api_event.body or ""),
+                NETWORK_PROTOCOL_NAME: protocol.split("/")[0] if protocol else "",
+                NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1] if protocol else "",
+                USER_AGENT_ORIGINAL: http.user_agent or "",
+                URL_FULL: http.path or "",
+            }
+        except (KeyError, AttributeError):
+            return None
 
 
 class ApiGatewayExtractor(AttributeExtractor):
@@ -130,28 +134,27 @@ class ApiGatewayExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.API_GATEWAY
 
-    def can_handle(self, event: dict) -> bool:
-        return (
-            "requestContext" in event
-            and "apiId" in event["requestContext"]
-            and "http" not in event["requestContext"]
-        )
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            api_event = APIGatewayProxyEvent(event)
+            rc = api_event.request_context
+            if rc.api_id is None or rc.get("http"):
+                return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
-        request_context = event.get("requestContext", {})
-        headers = event.get("headers", {})
-        protocol = request_context.get("protocol", "")
+            protocol = rc.protocol or ""
 
-        return {
-            FAAS_TRIGGER: FaasTriggerValues.HTTP.value,
-            HTTP_REQUEST_METHOD: event.get("httpMethod", ""),
-            HTTP_ROUTE: event.get("resource", ""),
-            HTTP_REQUEST_BODY_SIZE: len(event.get("body", "") or ""),
-            NETWORK_PROTOCOL_NAME: protocol.split("/")[0],
-            NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1],
-            USER_AGENT_ORIGINAL: headers.get("User-Agent", ""),
-            URL_FULL: event.get("path", ""),
-        }
+            return {
+                FAAS_TRIGGER: FaasTriggerValues.HTTP.value,
+                HTTP_REQUEST_METHOD: api_event.http_method or "",
+                HTTP_ROUTE: api_event.resource or "",
+                HTTP_REQUEST_BODY_SIZE: len(api_event.body or ""),
+                NETWORK_PROTOCOL_NAME: protocol.split("/")[0],
+                NETWORK_PROTOCOL_VERSION: protocol.split("/")[-1],
+                USER_AGENT_ORIGINAL: (api_event.headers or {}).get("User-Agent", ""),
+                URL_FULL: api_event.path or "",
+            }
+        except (KeyError, AttributeError):
+            return None
 
 
 class ElbExtractor(AttributeExtractor):
@@ -159,20 +162,23 @@ class ElbExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.ELB
 
-    def can_handle(self, event: dict) -> bool:
-        return "requestContext" in event and "elb" in event["requestContext"]
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            alb_event = ALBEvent(event)
+            rc = alb_event.request_context
+            if not rc or "elb" not in rc:
+                return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
-        headers = event.get("headers", {})
-
-        return {
-            FAAS_TRIGGER: FaasTriggerValues.HTTP.value,
-            HTTP_REQUEST_METHOD: event.get("httpMethod", ""),
-            HTTP_ROUTE: event.get("path", ""),
-            HTTP_REQUEST_BODY_SIZE: len(event.get("body", "") or ""),
-            URL_FULL: event.get("path", ""),
-            USER_AGENT_ORIGINAL: headers.get("user-agent", ""),
-        }
+            return {
+                FAAS_TRIGGER: FaasTriggerValues.HTTP.value,
+                HTTP_REQUEST_METHOD: alb_event.http_method or "",
+                HTTP_ROUTE: alb_event.path or "",
+                HTTP_REQUEST_BODY_SIZE: len(alb_event.body or ""),
+                URL_FULL: alb_event.path or "",
+                USER_AGENT_ORIGINAL: (alb_event.headers or {}).get("user-agent", ""),
+            }
+        except (KeyError, AttributeError):
+            return None
 
 
 class SqsExtractor(AttributeExtractor):
@@ -180,23 +186,24 @@ class SqsExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.SQS
 
-    def can_handle(self, event: dict) -> bool:
-        if "Records" not in event or len(event["Records"]) == 0:
-            return False
-        return event["Records"][0].get("eventSource") == "aws:sqs"
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            sqs_event = SQSEvent(event)
+            records = list(sqs_event.records)
+            if not records or records[0].event_source != "aws:sqs":
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
-        records = event.get("Records", [])
-        message_count = len(records)
-        queue_arn = records[0].get("eventSourceARN", "") if message_count > 0 else ""
-        queue_name = queue_arn.split(":")[-1]
+        first_record = records[0]
+        queue_name = first_record.event_source_arn.split(":")[-1]
 
         return {
             FAAS_TRIGGER: FaasTriggerValues.PUBSUB.value,
-            CLOUD_RESOURCE_ID: queue_arn,
-            MESSAGING_SYSTEM: self.data_source.value,
+            CLOUD_RESOURCE_ID: first_record.event_source_arn,
+            MESSAGING_SYSTEM: "aws.sqs",
             MESSAGING_OPERATION: MessagingOperationTypeValues.RECEIVE.value,
-            MESSAGING_BATCH_MESSAGE_COUNT: message_count,
+            MESSAGING_BATCH_MESSAGE_COUNT: len(records),
             MESSAGING_DESTINATION_NAME: queue_name,
         }
 
@@ -206,12 +213,15 @@ class SnsExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.SNS
 
-    def can_handle(self, event: dict) -> bool:
-        if "Records" not in event or len(event["Records"]) == 0:
-            return False
-        return event["Records"][0].get("eventSource") == "aws:sns"
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            sns_event = SNSEvent(event)
+            records = list(sns_event.records)
+            if not records or records[0].event_source != "aws:sns":
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
         return {
             FAAS_TRIGGER: FaasTriggerValues.PUBSUB.value,
         }
@@ -222,12 +232,15 @@ class S3Extractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.S3
 
-    def can_handle(self, event: dict) -> bool:
-        if "Records" not in event or len(event["Records"]) == 0:
-            return False
-        return event["Records"][0].get("eventSource") == "aws:s3"
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            s3_event = S3Event(event)
+            records = list(s3_event.records)
+            if not records or records[0].event_source != "aws:s3":
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
         return {
             FAAS_TRIGGER: FaasTriggerValues.DATASOURCE.value,
         }
@@ -238,12 +251,15 @@ class DynamoDbExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.DYNAMODB
 
-    def can_handle(self, event: dict) -> bool:
-        if "Records" not in event or len(event["Records"]) == 0:
-            return False
-        return event["Records"][0].get("eventSource") == "aws:dynamodb"
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            ddb_event = DynamoDBStreamEvent(event)
+            records = list(ddb_event.records)
+            if not records or records[0].event_source != "aws:dynamodb":
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
         return {
             FAAS_TRIGGER: FaasTriggerValues.DATASOURCE.value,
         }
@@ -254,12 +270,15 @@ class KinesisExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.KINESIS
 
-    def can_handle(self, event: dict) -> bool:
-        if "Records" not in event or len(event["Records"]) == 0:
-            return False
-        return event["Records"][0].get("eventSource") == "aws:kinesis"
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            kinesis_event = KinesisStreamEvent(event)
+            records = list(kinesis_event.records)
+            if not records or records[0].event_source != "aws:kinesis":
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
         return {
             FAAS_TRIGGER: FaasTriggerValues.DATASOURCE.value,
         }
@@ -270,14 +289,17 @@ class EventBridgeExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.EVENT_BRIDGE
 
-    def can_handle(self, event: dict) -> bool:
-        return "source" in event and "detail-type" in event
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            eb_event = EventBridgeEvent(event)
+            if not eb_event.source or not eb_event.detail_type:
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
-        detail_type = event.get("detail-type", "")
         trigger_type = (
             FaasTriggerValues.TIMER.value
-            if detail_type == "Scheduled Event"
+            if eb_event.detail_type == "Scheduled Event"
             else FaasTriggerValues.PUBSUB.value
         )
 
@@ -291,10 +313,14 @@ class CloudWatchLogsExtractor(AttributeExtractor):
     def data_source(self) -> AwsDataSource:
         return AwsDataSource.CLOUDWATCH_LOGS
 
-    def can_handle(self, event: dict) -> bool:
-        return "awslogs" in event and "data" in event["awslogs"]
+    def extract(self, event: dict, context: LambdaContext) -> dict | None:
+        try:
+            cw_event = CloudWatchLogsEvent(event)
+            if not cw_event.raw_logs_data:
+                return None
+        except (KeyError, AttributeError):
+            return None
 
-    def get_attributes(self, event: dict, context: LambdaContext) -> dict:
         return {
             FAAS_TRIGGER: FaasTriggerValues.DATASOURCE.value,
         }
@@ -326,8 +352,8 @@ class AwsAttributesExtractor:
         and tries to add as much metadata to the current span as it can.
         """
         for extractor in self._EXTRACTORS:
-            if extractor.can_handle(self.event):
-                attributes = extractor.get_attributes(self.event, self.context)
+            attributes = extractor.extract(self.event, self.context)
+            if attributes is not None:
                 self.span.set_attributes(attributes)
 
 

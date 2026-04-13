@@ -12,17 +12,19 @@ from opentelemetry.trace import (
     get_tracer_provider,
 )
 
-from aws_lambda_opentelemetry.utils import AwsAttributesExtractor
+from aws_lambda_opentelemetry.extractors import AwsAttributesExtractor
 
 
 class Instrumentor:
     def __init__(self, service: str | None = None):
         self._service = service
 
-    def _get_tracer(self, func: Callable) -> Any:
+    def _get_tracer(self, func: Callable[..., Any]) -> Any:
         return get_tracer(self._service or func.__module__)
 
-    def capture_lambda_handler(self, func: Callable | None = None, **kwargs: Any):
+    def capture_lambda_handler(
+        self, func: Callable[..., Any] | None = None, **kwargs: Any
+    ) -> Callable[..., Any]:
         if func is None:
             return lambda f: self.capture_lambda_handler(f, **kwargs)
 
@@ -54,7 +56,9 @@ class Instrumentor:
 
         return wrapper
 
-    def capture_method(self, method: Callable | None = None, **kwargs: Any):
+    def capture_method(
+        self, method: Callable[..., Any] | None = None, **kwargs: Any
+    ) -> Callable[..., Any]:
         if method is None:
             return lambda m: self.capture_method(m, **kwargs)
 
