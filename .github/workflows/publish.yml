@@ -10,6 +10,10 @@ jobs:
   publish:
     name: "Publish release"
     runs-on: "ubuntu-latest"
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
 
     steps:
       - uses: "actions/checkout@v5"
@@ -27,8 +31,5 @@ jobs:
       - name: "Publish"
         run: |
           make publish
-        env:
-          UV_PUBLISH_USERNAME: __token__
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
       - name: "Deploy docs"
         run: make docs-deploy

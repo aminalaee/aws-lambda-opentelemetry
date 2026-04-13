@@ -8,7 +8,7 @@ module-root = ""
 
 [project]
 name = "aws-lambda-opentelemetry"
-version = "0.0.0"
+version = "0.1.0"
 description = "AWS Lambda OpenTelemetry tools for Python"
 readme = "README.md"
 requires-python = ">=3.10"
