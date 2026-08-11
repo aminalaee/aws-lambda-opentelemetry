@@ -105,9 +105,19 @@ class SQSTraceExporter(SpanExporter):
             entries.append({"Id": id_, "MessageBody": serialized_span})
 
         try:
-            self._sqs_client.send_message_batch(
+            response = self._sqs_client.send_message_batch(
                 QueueUrl=self._queue_url, Entries=entries
             )
+            failed = response.get("Failed", [])
+            if failed:
+                for entry in failed:
+                    logger.error(
+                        "SQS send_message_batch failed entry: id=%s code=%s sender_fault=%s",
+                        entry.get("Id"),
+                        entry.get("Code"),
+                        entry.get("SenderFault"),
+                    )
+                return SpanExportResult.FAILURE
             return SpanExportResult.SUCCESS
         except Exception as exc:
             logger.exception(f"Unexpected error exporting spans: {exc}")
@@ -141,6 +151,10 @@ class SQSBatchSpanProcessor(BatchSpanProcessor):
     provider.add_span_processor(processor)
     trace.set_tracer_provider(provider)
     ```
+
+    Raises:
+        ValueError: If ``max_export_batch_size`` is outside the inclusive range
+            1 through 10.
     """
 
     MAX_SQS_BATCH_SIZE = 10
@@ -151,7 +165,11 @@ class SQSBatchSpanProcessor(BatchSpanProcessor):
         max_export_batch_size: int = MAX_SQS_BATCH_SIZE,
         **kwargs,
     ) -> None:
-        assert max_export_batch_size <= self.MAX_SQS_BATCH_SIZE
+        if not 1 <= max_export_batch_size <= self.MAX_SQS_BATCH_SIZE:
+            raise ValueError(
+                "max_export_batch_size must be between 1 and "
+                f"{self.MAX_SQS_BATCH_SIZE}."
+            )
         super().__init__(
             span_exporter=span_exporter,
             max_export_batch_size=max_export_batch_size,

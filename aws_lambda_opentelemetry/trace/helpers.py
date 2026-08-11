@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, Protocol, cast
 
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from opentelemetry.sdk.trace import TracerProvider
@@ -13,6 +13,23 @@ from opentelemetry.trace import (
 )
 
 from aws_lambda_opentelemetry.extractors import AwsAttributesExtractor
+
+
+class _NamedCallable(Protocol):
+    __name__: str
+    __qualname__: str
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
+def _name(func: Callable[..., Any]) -> str:
+    named = cast(_NamedCallable, func)
+    return named.__name__
+
+
+def _qualname(func: Callable[..., Any]) -> str:
+    named = cast(_NamedCallable, func)
+    return named.__qualname__
 
 
 class Instrumentor:
@@ -32,7 +49,7 @@ class Instrumentor:
         def wrapper(event: dict, context: LambdaContext):
             tracer = self._get_tracer(func)
             provider = get_tracer_provider()
-            kwargs.setdefault("name", func.__name__)
+            kwargs.setdefault("name", _name(func))
             kwargs.setdefault("kind", SpanKind.SERVER)
 
             if not isinstance(provider, TracerProvider):
@@ -65,7 +82,7 @@ class Instrumentor:
         @wraps(method)
         def wrapper(*args: Any, **func_kwargs: Any):
             tracer = self._get_tracer(method)
-            kwargs.setdefault("name", method.__qualname__)
+            kwargs.setdefault("name", _qualname(method))
 
             with tracer.start_as_current_span(**kwargs) as span:
                 try:
