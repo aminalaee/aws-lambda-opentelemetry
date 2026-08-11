@@ -1,5 +1,1 @@
-from aws_lambda_opentelemetry.trace import Instrumentor
-
-__all__ = [
-    "Instrumentor",
-]
+"""A reliable OpenTelemetry delivery stack for AWS Lambda."""

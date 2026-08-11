@@ -1,83 +1,63 @@
 # AWS Lambda OpenTelemetry
 
-OpenTelemetry instrumentation for AWS Lambda functions.
+This is a reliable OpenTelemetry **delivery stack** for AWS Lambda. It is
+designed to combine upstream instrumentation with Lambda-aware exporters,
+Collector components, and AWS infrastructure.
+Upstream [`opentelemetry-instrumentation-aws-lambda`](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/aws_lambda/aws_lambda.html)
+is the default way to create Lambda telemetry; this project explores how to
+deliver completed telemetry with clear latency and reliability trade-offs.
 
----
+## Current status
 
-## Installation
+The released Python surface currently contains:
+
+- an experimental `SQSTraceExporter`;
+- an `SQSBatchSpanProcessor` constrained to SQS's ten-entry batch limit; and
+- serialization and compression support for the current SQS wire format.
+
+The project does **not** yet ship an SQS Collector receiver, an invocation-level
+transport envelope, a direct-OTLP deployment, or a CloudWatch Logs delivery
+path. These are roadmap items.
+
+## Recommended setup
+
+Install upstream Lambda instrumentation alongside this package:
 
 ```bash
-pip install aws-lambda-opentelemetry
+pip install aws-lambda-opentelemetry \
+  opentelemetry-instrumentation-aws-lambda boto3
 ```
 
-## Quick Start
+Then let upstream instrumentation create handler spans and use this package as
+the exporter:
 
 ```python
-from aws_lambda_opentelemetry import Instrumentor
+import boto3
+from opentelemetry import trace
+from opentelemetry.instrumentation.aws_lambda import AwsLambdaInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
 
-instrumentor = Instrumentor(service="my-service")
+from aws_lambda_opentelemetry.trace.export import (
+    SQSBatchSpanProcessor,
+    SQSTraceExporter,
+)
 
-@instrumentor.capture_lambda_handler
+provider = TracerProvider()
+exporter = SQSTraceExporter(
+    queue_url="https://sqs.eu-west-1.amazonaws.com/123456789012/telemetry",
+    sqs_client=boto3.client("sqs"),
+)
+provider.add_span_processor(SQSBatchSpanProcessor(exporter))
+trace.set_tracer_provider(provider)
+
+
 def handler(event, context):
-    result = process(event)
-    return {"statusCode": 200, "body": result}
+    return {"statusCode": 200, "body": "ok"}
 
-@instrumentor.capture_method
-def process(event):
-    return event["body"].upper()
+
+AwsLambdaInstrumentor().instrument(tracer_provider=provider)
 ```
 
-## Features
-
-- **`capture_lambda_handler`** — Wraps Lambda handlers with automatic span creation, AWS attribute extraction, and force flush
-- **`capture_method`** — Wraps regular functions/methods as child spans
-- **Automatic attribute extraction** — Detects API Gateway, HTTP API, ALB, SQS, SNS, S3, DynamoDB, Kinesis, EventBridge, and CloudWatch Logs events
-- **Cold start tracking** — Automatically tracks cold start via `faas.coldstart`
-- **SQS trace exporter** — Export spans to SQS with optional gzip/deflate compression
-
-## Supported Event Sources
-
-| Source | Detection | Attributes |
-|--------|-----------|------------|
-| API Gateway (REST) | `requestContext.apiId` | HTTP method, route, protocol, user agent, body size |
-| HTTP API (v2) | `requestContext.http` | HTTP method, route, protocol, user agent, body size |
-| ALB/ELB | `requestContext.elb` | HTTP method, path, user agent, body size |
-| SQS | `eventSource: aws:sqs` | Queue name, message count, messaging system |
-| SNS | `eventSource: aws:sns` | Trigger type |
-| S3 | `eventSource: aws:s3` | Trigger type |
-| DynamoDB Streams | `eventSource: aws:dynamodb` | Trigger type |
-| Kinesis | `eventSource: aws:kinesis` | Trigger type |
-| EventBridge | `source` + `detail-type` | Trigger type (timer or pubsub) |
-| CloudWatch Logs | `awslogs.data` | Trigger type |
-
-## Usage with Decorators
-
-### Lambda Handler
-
-Both bare decorator and decorator-with-arguments styles are supported:
-
-```python
-# Bare decorator
-@instrumentor.capture_lambda_handler
-def handler(event, context):
-    ...
-
-# With arguments
-@instrumentor.capture_lambda_handler(name="my-handler")
-def handler(event, context):
-    ...
-```
-
-### Methods and Functions
-
-```python
-@instrumentor.capture_method
-def my_function(x, y):
-    return x + y
-
-@instrumentor.capture_method(name="custom-span-name")
-def another_function():
-    ...
-```
-
-Child spans created by `capture_method` are automatically linked to the parent Lambda handler span.
+The Lambda execution role must allow `sqs:SendMessageBatch`. The current
+exporter creates one SQS message per span and uses a project-specific wire
+format for which no Collector receiver is included yet.

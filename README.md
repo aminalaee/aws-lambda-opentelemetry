@@ -1,83 +1,78 @@
 # AWS Lambda OpenTelemetry
 
-OpenTelemetry instrumentation for AWS Lambda functions.
+A reliable OpenTelemetry delivery stack for AWS Lambda.
 
----
+The stack is designed to combine upstream OpenTelemetry instrumentation with
+Lambda-aware exporters, Collector components, and AWS infrastructure. It
+explores how completed telemetry can leave Lambda with explicit latency,
+reliability, and cost trade-offs. Upstream
+[`opentelemetry-instrumentation-aws-lambda`](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/aws_lambda/aws_lambda.html)
+creates Lambda spans; this project focuses on delivery paths such as SQS,
+direct OTLP, and CloudWatch Logs.
+
+## Project status
+
+The package is alpha software. Today it provides an SQS trace exporter and a
+batch span processor configured for SQS limits. The receiver, invocation-level
+batch envelope, direct-OTLP reference deployment, and CloudWatch Logs path are
+planned work, not released features.
+
+| Capability | Status |
+| --- | --- |
+| SQS trace exporter | Available, experimental; currently one SQS message per span |
+| SQS Collector receiver | Planned |
+| Direct OTLP reference path | Planned |
+| CloudWatch Logs delivery path | Planned |
 
 ## Installation
 
+Install this project with the upstream Lambda instrumentation and your AWS SDK:
+
 ```bash
-pip install aws-lambda-opentelemetry
+pip install aws-lambda-opentelemetry \
+  opentelemetry-instrumentation-aws-lambda boto3
 ```
 
-## Quick Start
+## Recommended setup
+
+Use OpenTelemetry contrib to instrument the Lambda handler and configure this
+project only as the delivery component:
 
 ```python
-from aws_lambda_opentelemetry import Instrumentor
+import boto3
+from opentelemetry import trace
+from opentelemetry.instrumentation.aws_lambda import AwsLambdaInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
 
-instrumentor = Instrumentor(service="my-service")
+from aws_lambda_opentelemetry.trace.export import (
+    SQSBatchSpanProcessor,
+    SQSTraceExporter,
+)
 
-@instrumentor.capture_lambda_handler
+provider = TracerProvider()
+exporter = SQSTraceExporter(
+    queue_url="https://sqs.eu-west-1.amazonaws.com/123456789012/telemetry",
+    sqs_client=boto3.client("sqs"),
+)
+provider.add_span_processor(SQSBatchSpanProcessor(exporter))
+trace.set_tracer_provider(provider)
+
+
 def handler(event, context):
-    result = process(event)
-    return {"statusCode": 200, "body": result}
+    return {"statusCode": 200, "body": "ok"}
 
-@instrumentor.capture_method
-def process(event):
-    return event["body"].upper()
+
+AwsLambdaInstrumentor().instrument(tracer_provider=provider)
 ```
 
-## Features
+The execution role needs permission to call `sqs:SendMessageBatch` for the
+selected queue. The current exporter sends base64-encoded OTLP protobuf and
+does not include a Collector receiver; consumers must understand the current
+wire format. This limitation is why the exporter is marked experimental.
 
-- **`capture_lambda_handler`** — Wraps Lambda handlers with automatic span creation, AWS attribute extraction, and force flush
-- **`capture_method`** — Wraps regular functions/methods as child spans
-- **Automatic attribute extraction** — Detects API Gateway, HTTP API, ALB, SQS, SNS, S3, DynamoDB, Kinesis, EventBridge, and CloudWatch Logs events
-- **Cold start tracking** — Automatically tracks cold start via `faas.coldstart`
-- **SQS trace exporter** — Export spans to SQS with optional gzip/deflate compression
+## Scope
 
-## Supported Event Sources
-
-| Source | Detection | Attributes |
-|--------|-----------|------------|
-| API Gateway (REST) | `requestContext.apiId` | HTTP method, route, protocol, user agent, body size |
-| HTTP API (v2) | `requestContext.http` | HTTP method, route, protocol, user agent, body size |
-| ALB/ELB | `requestContext.elb` | HTTP method, path, user agent, body size |
-| SQS | `eventSource: aws:sqs` | Queue name, message count, messaging system |
-| SNS | `eventSource: aws:sns` | Trigger type |
-| S3 | `eventSource: aws:s3` | Trigger type |
-| DynamoDB Streams | `eventSource: aws:dynamodb` | Trigger type |
-| Kinesis | `eventSource: aws:kinesis` | Trigger type |
-| EventBridge | `source` + `detail-type` | Trigger type (timer or pubsub) |
-| CloudWatch Logs | `awslogs.data` | Trigger type |
-
-## Usage with Decorators
-
-### Lambda Handler
-
-Both bare decorator and decorator-with-arguments styles are supported:
-
-```python
-# Bare decorator
-@instrumentor.capture_lambda_handler
-def handler(event, context):
-    ...
-
-# With arguments
-@instrumentor.capture_lambda_handler(name="my-handler")
-def handler(event, context):
-    ...
-```
-
-### Methods and Functions
-
-```python
-@instrumentor.capture_method
-def my_function(x, y):
-    return x + y
-
-@instrumentor.capture_method(name="custom-span-name")
-def another_function():
-    ...
-```
-
-Child spans created by `capture_method` are automatically linked to the parent Lambda handler span.
+This project does not replace general Lambda, boto3, framework, or client
+instrumentation. Those belong in the OpenTelemetry Python ecosystem. Its goal
+is to compare and implement Lambda-aware telemetry delivery modes while making
+their acknowledgement, retry, duplication, loss, and latency behavior clear.
